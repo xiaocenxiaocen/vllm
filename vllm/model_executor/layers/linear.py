@@ -10,6 +10,7 @@ from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               split_tensor_along_last_dim,
                               tensor_model_parallel_all_gather,
                               tensor_model_parallel_all_reduce)
+from vllm.model_executor.utils import set_weight_attrs, post_preprocessing
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
@@ -383,9 +384,7 @@ class ColumnParallelLinear(LinearBase):
         if len(loaded_weight.shape) == 0:
             loaded_weight = loaded_weight.reshape(1)
 
-        preprocessor = getattr(param, "preprocessor", None)
-        if preprocessor is not None:
-            loaded_weight = preprocessor(loaded_weight)
+        loaded_weight = post_preprocessing(param, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
@@ -504,6 +503,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                     param_data, loaded_weight = adjust_scalar_to_fused_array(
                         param_data, loaded_weight, 0)
 
+                loaded_weight = post_preprocessing(param, loaded_weight)
                 assert param_data.shape == loaded_weight.shape
                 param_data.copy_(loaded_weight)
                 return
@@ -565,8 +565,11 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                 input_size = loaded_weight.shape[input_dim]
                 param_data = param_data.narrow(input_dim, 0, input_size)
 
-            param_data = param_data.narrow(output_dim, shard_offset,
-                                           shard_size)
+            if param_data.dtype != loaded_weight.dtype:
+                fix = param.pack_factor
+            else:
+                fix = 1
+            param_data = param_data.narrow(output_dim, shard_offset * fix, shard_size * fix)
             start_idx = tp_rank * shard_size
             loaded_weight = loaded_weight.narrow(output_dim, start_idx,
                                                  shard_size)
@@ -590,9 +593,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                     "MergedColumnParallelLinear, assume the weight is "
                     "the same for all partitions.")
 
-        preprocessor = getattr(param, "preprocessor", None)
-        if preprocessor is not None:
-            loaded_weight = preprocessor(loaded_weight)
+        loaded_weight = post_preprocessing(param, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
@@ -848,6 +849,7 @@ class QKVParallelLinear(ColumnParallelLinear):
                     param_data, loaded_weight = adjust_scalar_to_fused_array(
                         param_data, loaded_weight, 0)
 
+                loaded_weight = post_preprocessing(param, loaded_weight)
                 assert param_data.shape == loaded_weight.shape
                 param_data.copy_(loaded_weight)
                 return
@@ -933,8 +935,11 @@ class QKVParallelLinear(ColumnParallelLinear):
                 input_size = loaded_weight.shape[input_dim]
                 param_data = param_data.narrow(input_dim, 0, input_size)
 
-            param_data = param_data.narrow(output_dim, shard_offset,
-                                           shard_size)
+            if param_data.dtype != loaded_weight.dtype:
+                fix = param.pack_factor
+            else:
+                fix = 1
+            param_data = param_data.narrow(output_dim, shard_offset * fix, shard_size * fix)
             if loaded_shard_id == "q":
                 shard_id = tp_rank
             else:
@@ -960,9 +965,7 @@ class QKVParallelLinear(ColumnParallelLinear):
                     "Loading a weight without `output_dim` attribute in "
                     "QKVParallelLinear, assume the weight is the same "
                     "for all partitions.")
-        preprocessor = getattr(param, "preprocessor", None)
-        if preprocessor is not None:
-            loaded_weight = preprocessor(loaded_weight)
+        loaded_weight = post_preprocessing(param, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
@@ -1071,9 +1074,7 @@ class RowParallelLinear(LinearBase):
         if len(loaded_weight.shape) == 0:
             loaded_weight = loaded_weight.reshape(1)
 
-        preprocessor = getattr(param, "preprocessor", None)
-        if preprocessor is not None:
-            loaded_weight = preprocessor(loaded_weight)
+        loaded_weight = post_preprocessing(param, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 

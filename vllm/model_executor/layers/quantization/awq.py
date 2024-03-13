@@ -262,12 +262,11 @@ class AWQLinearMethodOpt(AWQLinearMethod):
         qzeros = PackedvLLMParameter(
             data=torch.empty(
                 input_size_per_partition // self.quant_config.group_size,
-                output_size_per_partition // self.quant_config.pack_factor,
+                output_size_per_partition,
                 dtype=params_dtype,
             ),
             input_dim=0,
             output_dim=1,
-            packed_factor=self.quant_config.pack_factor,
             weight_loader=weight_loader)
 
         scales = GroupQuantScaleParameter(data=torch.empty(

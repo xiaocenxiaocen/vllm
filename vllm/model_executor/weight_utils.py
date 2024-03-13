@@ -15,7 +15,8 @@ from tqdm.auto import tqdm
 
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization import (get_quantization_config,
-                                                     QuantizationConfig)
+from cserve.model_execution.utils import post_preprocessing
+                                                    QuantizationConfig)
 
 logger = init_logger(__name__)
 
@@ -267,9 +268,7 @@ def convert_pyslice_to_tensor(x: Any) -> torch.Tensor:
 def default_weight_loader(param: torch.Tensor,
                           loaded_weight: torch.Tensor) -> None:
     """Default weight loader."""
-    preprocessor = getattr(param, "preprocessor", None)
-    if preprocessor is not None:
-        loaded_weight = preprocessor(loaded_weight)
+    loaded_weight = post_preprocessing(param, loaded_weight)
     assert param.size() == loaded_weight.size()
     param.data.copy_(loaded_weight)
 

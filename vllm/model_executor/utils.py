@@ -33,3 +33,24 @@ def set_weight_attrs(
         assert not hasattr(
             weight, key), (f"Overwriting existing tensor attribute: {key}")
         setattr(weight, key, value)
+
+
+def post_preprocessing(param: torch.Tensor, loaded_weight: torch.Tensor) -> torch.Tensor:
+    """Post preprocessing a weight tensor.
+
+    This method is used to preprocess a weight tensor to make it satisfy some
+    constraints of a specific quantized kernel. This is because some quantization
+    kernel may assume some weights be organized in some special layouts to achieve
+    better performance.
+
+    Args:
+        param: The parameter
+        weight: The loaded weight tensor.
+    """
+    preprocessor = getattr(param, "preprocessor", None)
+    if preprocessor is not None:
+        loaded_weight = preprocessor(loaded_weight)
+    dumper = getattr(param, "dumper", None)
+    if dumper is not None:
+        dumper(loaded_weight)
+    return loaded_weight
