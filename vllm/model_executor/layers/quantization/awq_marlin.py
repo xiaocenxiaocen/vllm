@@ -4,7 +4,7 @@ import torch
 
 from vllm import _custom_ops as ops
 from vllm.logger import init_logger
-from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase
+from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase, LinearKernelBase
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.quantization.utils.marlin_utils import (
@@ -138,6 +138,16 @@ class AWQMarlinLinearMethod(LinearMethodBase):
 
     def __init__(self, quant_config: AWQMarlinConfig) -> None:
         self.quant_config = quant_config
+
+    def create_linear_kernel(
+        self,
+        input_size_per_partition: int,
+        output_partition_sizes: List[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype
+    ) -> LinearKernelBase:
+        return None
 
     def create_weights(
         self,

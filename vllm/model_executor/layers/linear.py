@@ -19,12 +19,11 @@ from vllm.model_executor.parameter import (BasevLLMParameter,
                                            PackedvLLMParameter,
                                            PerTensorScaleParameter,
                                            RowvLLMParameter)
-from vllm.model_executor.utils import set_weight_attrs
 
 logger = init_logger(__name__)
 
 WEIGHT_LOADER_V2_SUPPORTED = [
-    "CompressedTensorsLinearMethod", "AWQMarlinLinearMethod",
+    "CompressedTensorsLinearMethod", "AWQHidetLinearMethod", "AWQMarlinLinearMethod",
     "AWQLinearMethod", "GPTQMarlinLinearMethod", "Fp8LinearMethod",
     "MarlinLinearMethod", "QQQLinearMethod", "GPTQMarlin24LinearMethod",
     "TPUInt8LinearMethod", "GPTQLinearMethod", "FBGEMMFp8LinearMethod",
@@ -539,6 +538,12 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
             # If quantized, we need to adjust the offset and size to account
             # for the packing.
             packed_dim = getattr(param, "packed_dim", None)
+            pack_factor = getattr(param, "pack_factor", None)
+            print("Here")
+            if pack_factor is None:
+                print(param)
+                print(param.shape)
+                print(param.name)
             if packed_dim == output_dim:
                 shard_size = shard_size // param.pack_factor
                 shard_offset = shard_offset // param.pack_factor

@@ -217,8 +217,28 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (6, 1))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 4))
+    tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
+    for parallel_k_parts in PARALLEL_K_PARTS:
+        _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
+        _predefined_config.append(Config(tiled_mma, 32, 4, parallel_k_parts))
+ 
+    a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
+    b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
+    c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
     mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 1))
     warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 4))
+    tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
+    for parallel_k_parts in PARALLEL_K_PARTS:
+        _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
+        _predefined_config.append(Config(tiled_mma, 32, 4, parallel_k_parts))
+
+    a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
+    b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
+    c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 1))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 8), TensorLayout((1, 8)), (2, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
@@ -262,8 +282,8 @@ class FpAIntBGemm:
         n = n * b.element_size() * 8 // self.weight_dtype.nbits
 
         runtime_api.set_symbol_value(self.m_symbol_name, m)
-        m_clip = min(max(m, 8), 128)
-        m_roundup = min(i for i in [8, 16, 32, 48, 64, 128] if i >= m_clip)
+        m_clip = min(max(m, 8), 1024)
+        m_roundup = min(i for i in [8, 16, 32, 48, 64, 128, 1024] if i >= m_clip)
         if m_roundup in self.cache:
             config, func = self.cache[m_roundup]
         else:
@@ -271,9 +291,16 @@ class FpAIntBGemm:
             config, func = self._find_best_candidates_by_analytical_model(m)
             self.cache[m] = (config, func)
         bm, bn, _ = config.thread_block_shape
+        # print("BRUH", m, n, bm, bn)
+        #if m > 16 and m < 1024:
+        #    print("=======================")
+        #    print(m,n,k)
+        #    print(bm, bn)
+        #    print(config)
+        #    print("==================")
         parallel_k_parts = config.parallel_k_parts
         grid_m, grid_n = cdiv(m, bm), cdiv(n, bn)
-        c_parallel_k_parts = torch.empty((parallel_k_parts, m, n), dtype=torch.float32, device="cuda")
+        c_parallel_k_parts = torch.empty((parallel_k_parts, m, n), dtype=torch.float16, device="cuda")
         c = torch.empty((m, n), dtype=torch.float16, device="cuda")
         lock = torch.zeros((grid_m, grid_n), dtype=torch.int32, device="cuda")
         wrapper_func(func, a, b, c, scale, zeros, c_parallel_k_parts, lock)
@@ -471,7 +498,7 @@ class FpAIntBGemm:
         k = self.k
         n = self.n
         group_size = self.group_size
-        for M in [8, 16, 32, 48, 64, 128]:
+        for M in [8, 16, 32, 48, 64, 128, 1024]:
             if self.tuning_cache is not None and self.tuning_cache.contains(M, n, k):
                 min_cfg = self.tuning_cache.get(M, n, k)
                 for m in modules:
@@ -483,6 +510,10 @@ class FpAIntBGemm:
             module2time = {}
             for m in modules:
                 cfg = m._tuning_kwargs["config"]
+                bm, _, _ = cfg.thread_block_shape
+                if M <= 128 and (bm >= 2 * M or bm < M // 2):
+                    module2time[m] = 1e9
+                    continue
                 time = model.predict(cfg, M, n, k, group_size)
                 module2time[m] = time
 
@@ -522,6 +553,7 @@ class FpAIntBGemm:
                     min_time = time
                     min_cfg = cfg
                     min_func = func
+            print("func2", M, n, k, min_cfg)
             self.cache[M] = (min_cfg, min_func)
             if self.tuning_cache is not None:
                 self.tuning_cache.put(M, n, k, min_cfg)
@@ -693,7 +725,7 @@ class FpAIntBGemm:
                     syncthreads()
 
                 k_part = blockIdx.x % parallel_k_parts
- 
+
                 msk_c = mask(auto_copy(), [m - pid_m * bm, n - pid_n * bn])
                 tr_c_f16 = cast(tr_c, f16)
                 tr_C = rearrange(tr_c_f16, auto_layout, "register")
@@ -707,7 +739,7 @@ class FpAIntBGemm:
                 #txgx_c = partition_dst(tg_c, auto_copy())
                 #txrx_c = partition_src(tr_C, auto_copy())
                 #copy(auto_copy((bm, bn)), txrx_c, txgx_c, msk_c)
-                
+
                 #acquire_seq_semaphore(lc, k_part)
                 #if k_part == 0:
                 #    txgx_c = partition_dst(tg_c, auto_copy())
@@ -723,9 +755,9 @@ class FpAIntBGemm:
 
                 #    txgx_c_cur = partition_dst(tg_c, auto_copy())
                 #    txrx_c_cur = partition_src(tr_C, auto_copy())
-                #    copy(auto_copy((bm, bn)), txrx_c_cur, txgx_c_cur, msk_c) 
-                #        
-                #    if k_part < parallel_k_parts - 1: 
+                #    copy(auto_copy((bm, bn)), txrx_c_cur, txgx_c_cur, msk_c)
+                #
+                #    if k_part < parallel_k_parts - 1:
                 #        release_seq_semaphore(lc, k_part + 1)
                 #    else:
                 #        release_seq_semaphore(lc, 0)
@@ -970,7 +1002,7 @@ class FpAIntBGemm:
                         mma(tiled_mma, tr_c, txra[:, :, ki % 2], txrb_f16, tr_c)
 
                 k_part = blockIdx.x % parallel_k_parts
- 
+
                 msk_c = mask(auto_copy(), [m - pid_m * bm, n - pid_n * bn])
                 tr_c_f16 = cast(tr_c, f16)
                 tr_C = rearrange(tr_c_f16, auto_layout, "register")
@@ -984,7 +1016,7 @@ class FpAIntBGemm:
                 #txgx_c = partition_dst(tg_c, auto_copy())
                 #txrx_c = partition_src(tr_C, auto_copy())
                 #copy(auto_copy((bm, bn)), txrx_c, txgx_c, msk_c)
- 
+
                 #acquire_seq_semaphore(lc, k_part)
                 #if k_part == 0:
                 #    txgx_c = partition_dst(tg_c, auto_copy())
@@ -1000,9 +1032,9 @@ class FpAIntBGemm:
 
                 #    txgx_c_cur = partition_dst(tg_c, auto_copy())
                 #    txrx_c_cur = partition_src(tr_C, auto_copy())
-                #    copy(auto_copy((bm, bn)), txrx_c_cur, txgx_c_cur, msk_c) 
-                #        
-                #    if k_part < parallel_k_parts - 1: 
+                #    copy(auto_copy((bm, bn)), txrx_c_cur, txgx_c_cur, msk_c)
+                #
+                #    if k_part < parallel_k_parts - 1:
                 #        release_seq_semaphore(lc, k_part + 1)
                 #    else:
                 #        release_seq_semaphore(lc, 0)

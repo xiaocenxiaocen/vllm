@@ -320,7 +320,7 @@ def preprocess_weight(weight: torch.Tensor):
     return w
 
 
-def bench(f, warmup=1, iter=20):
+def bench(f, warmup=10, iter=50):
     import time
 
     for i in range(warmup + iter):
