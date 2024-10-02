@@ -223,7 +223,7 @@ def register_configs():
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
         _predefined_config.append(Config(tiled_mma, 32, 4, parallel_k_parts))
- 
+
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
@@ -652,7 +652,7 @@ class FpAIntBGemm:
 
                 tr_a = make_tensor(f16, layout_auto((bm, k_tile * 2)), "register")
                 tr_b = make_tensor(wdtype, layout_auto((bn, k_tile * 2)), "register")
-                tr_c = make_tensor("float32", auto_layout, "register")
+                tr_c = make_tensor("float16", auto_layout, "register")
                 fill(tr_c, 0.0)
 
                 tr_scale = make_tensor(f16, layout_auto((bn, k_tile * 2), (1, 0)), "register")
@@ -727,8 +727,8 @@ class FpAIntBGemm:
                 k_part = blockIdx.x % parallel_k_parts
 
                 msk_c = mask(auto_copy(), [m - pid_m * bm, n - pid_n * bn])
-                tr_c_f16 = cast(tr_c, f16)
-                tr_C = rearrange(tr_c_f16, auto_layout, "register")
+                #tr_c_f16 = cast(tr_c, f16)
+                tr_C = rearrange(tr_c, auto_layout, "register")
 
                 lc = ~lock[pid_m, pid_n]
                 #tg_c = tensor_view(
@@ -885,7 +885,7 @@ class FpAIntBGemm:
 
                 tr_a = make_tensor(f16, layout_auto((bm, k_tile * 2)), "register")
                 tr_b = make_tensor(wdtype, layout_auto((bn, k_tile * 2)), "register")
-                tr_c = make_tensor("float32", auto_layout, "register")
+                tr_c = make_tensor("float16", auto_layout, "register")
                 fill(tr_c, 0.0)
 
                 tr_scale = make_tensor(f16, layout_auto((bn, k_tile * 2), (1, 0)), "register")
@@ -1004,8 +1004,8 @@ class FpAIntBGemm:
                 k_part = blockIdx.x % parallel_k_parts
 
                 msk_c = mask(auto_copy(), [m - pid_m * bm, n - pid_n * bn])
-                tr_c_f16 = cast(tr_c, f16)
-                tr_C = rearrange(tr_c_f16, auto_layout, "register")
+                #tr_c_f16 = cast(tr_c, f16)
+                tr_C = rearrange(tr_c, auto_layout, "register")
 
                 lc = ~lock[pid_m, pid_n]
                 #tg_c = tensor_view(

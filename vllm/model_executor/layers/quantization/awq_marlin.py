@@ -269,6 +269,13 @@ class AWQMarlinLinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        #f = open("marlin.txt", "a")
+        #k = layer.input_size_per_partition
+        #n = layer.output_size_per_partition
+        #reshaped_x = x.reshape(-1, x.shape[-1])
+        #m, _ = reshaped_x.shape
+        #f.write('{}x{}x{}\n'.format(m, n, k))
+
         return apply_awq_marlin_linear(
             input=x,
             weight=layer.qweight,

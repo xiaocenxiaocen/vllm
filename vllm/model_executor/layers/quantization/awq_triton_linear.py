@@ -14,14 +14,13 @@ from vllm.model_executor.parameter import (GroupQuantScaleParameter,
                                            PackedvLLMParameter)
 from vllm.model_executor.layers.quantization.utils.marlin_utils import replace_tensor
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from .weight_utils import preprocess_weight, cast_u4_to_f16_interleaved
-from .hidet_kernel import w4a16_linear
-from vllm.model_executor.utils import set_weight_attrs
+from .awq_triton import awq_gemm_triton, AWQ_TRITON_SUPPORTED_GROUP_SIZES
+
 
 logger = init_logger(__name__)
 
 
-class AWQHidetConfig(QuantizationConfig):
+class AWQTritonConfig(QuantizationConfig):
     """Config class for AWQ.
 
     Reference: https://arxiv.org/abs/2306.00978
@@ -48,7 +47,7 @@ class AWQHidetConfig(QuantizationConfig):
 
     @classmethod
     def get_name(self) -> str:
-        return "awq_hidet"
+        return "awq_triton"
 
     @classmethod
     def get_supported_act_dtypes(self) -> List[torch.dtype]:
@@ -68,7 +67,7 @@ class AWQHidetConfig(QuantizationConfig):
         ]
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "AWQHidetConfig":
+    def from_config(cls, config: Dict[str, Any]) -> "AWQTritonConfig":
         weight_bits = cls.get_from_keys(config, ["w_bit", "bits"])
         group_size = cls.get_from_keys(config, ["q_group_size", "group_size"])
         zero_point = cls.get_from_keys(config, ["zero_point"])
@@ -79,7 +78,7 @@ class AWQHidetConfig(QuantizationConfig):
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg,
                                      user_quant) -> Optional[str]:
-        can_convert = cls.is_awq_hidet_compatible(hf_quant_cfg)
+        can_convert = cls.is_awq_triton_compatible(hf_quant_cfg)
         is_valid_user_quant = (user_quant is None or user_quant == "marlin"
                                or user_quant == "awq_marlin")
 
@@ -90,24 +89,24 @@ class AWQHidetConfig(QuantizationConfig):
             return cls.get_name()
 
         if can_convert and user_quant == "awq":
-            logger.info("Detected that the model can run with awq_hidet"
+            logger.info("Detected that the model can run with awq_triton"
                         ", however you specified quantization=awq explicitly,"
                         " so forcing awq. Use quantization=awq_hidet for"
                         " faster inference")
         return None
 
     def get_quant_method(self, layer: torch.nn.Module,
-                         prefix: str) -> Optional["AWQHidetLinearMethod"]:
+                         prefix: str) -> Optional["AWQTritonLinearMethod"]:
         if (isinstance(layer, LinearBase) or
             (isinstance(layer, ParallelLMHead) and self.lm_head_quantized)):
-            return AWQHidetLinearMethod(self)
+            return AWQTritonLinearMethod(self)
         return None
 
     def get_scaled_act_names(self) -> List[str]:
         return []
 
     @classmethod
-    def is_awq_hidet_compatible(cls, quant_config: Dict[str, Any]):
+    def is_awq_triton_compatible(cls, quant_config: Dict[str, Any]):
         # Extract data from quant config.
         quant_method = quant_config.get("quant_method", "").lower()
         num_bits = quant_config.get("bits", None)
@@ -117,31 +116,19 @@ class AWQHidetConfig(QuantizationConfig):
         if quant_method != "awq":
             return False
 
-        if num_bits != 4 or group_size is None or has_zp is None:
+        if num_bits != 4 or group_size not in AWQ_TRITON_SUPPORTED_GROUP_SIZES or has_zp is None:
             return False
         return True
 
 
-class AWQLinearKernel(LinearKernelBase):
-    """Linear kernel for AWQ
-    """
-    def __init__(self, input_size: int, output_size: int, group_size: int):
-        self.linear_kernel = w4a16_linear("quant", input_size, output_size, group_size)
-        self.preprocessor = preprocess_weight
-        self.preprocessed = False
-
-    def apply_tensors(self, *tensors: torch.Tensor):
-        return self.linear_kernel(*tensors)
-
-
-class AWQHidetLinearMethod(LinearMethodBase):
+class AWQTritonLinearMethod(LinearMethodBase):
     """Linear method for AWQ.
 
     Args:
         quant_config: The AWQ quantization config.
     """
 
-    def __init__(self, quant_config: AWQHidetConfig):
+    def __init__(self, quant_config: AWQTritonConfig):
         self.quant_config = quant_config
 
     def create_linear_kernel(
@@ -152,7 +139,7 @@ class AWQHidetLinearMethod(LinearMethodBase):
         output_size: int,
         params_dtype: torch.dtype
     ) -> LinearKernelBase:
-        return AWQLinearKernel(input_size_per_partition, sum(output_partition_sizes), self.quant_config.group_size)
+        return None
 
     def create_weights(self, layer: torch.nn.Module,
                        input_size_per_partition: int,
@@ -224,19 +211,10 @@ class AWQHidetLinearMethod(LinearMethodBase):
         #print("scales", layer.scales.shape, layer.scales.dtype)
         layer.qweight = torch.nn.Parameter(layer.qweight.data,
                                            requires_grad=False)
-        #layer.qzeros = torch.nn.Parameter(layer.qzeros.data,
-        #                                  requires_grad=False)
+        layer.qzeros = torch.nn.Parameter(layer.qzeros.data,
+                                          requires_grad=False)
         layer.scales = torch.nn.Parameter(layer.scales.data,
                                           requires_grad=False)
-
-        hidet_qweight = preprocess_weight(layer.qweight)
-        replace_tensor(layer, "qweight", hidet_qweight)
-
-        hidet_zp = cast_u4_to_f16_interleaved(layer.qzeros.data)
-        # print(type(layer.qzeros))
-        del layer.qzeros
-        layer.qzeros = torch.nn.Parameter(hidet_zp, requires_grad=False)
-        # replace_tensor(layer, "qzeros", hidet_zp)
 
     def apply(self,
               layer: torch.nn.Module,
@@ -249,25 +227,13 @@ class AWQHidetLinearMethod(LinearMethodBase):
         out_shape = x.shape[:-1] + (qweight.shape[-1] * pack_factor,)
         reshaped_x = x.reshape(-1, x.shape[-1])
 
-        #k, n = qweight.shape
-        #n = n * pack_factor
-        #m, _ = reshaped_x.shape
-        #f = open("cute.txt", "a")
-        #f.write("{}x{}x{}\n".format(m, n, k))
-        #print("fuck", m, n, k)
-        #print("qw", qweight.shape, qweight.dtype)
-        #print("zp", qzeros.shape, qzeros.dtype)
-        #print("scales", scales.shape, scales.dtype)
-#        raise RuntimeError("stop here")
-        # print("x", x.shape)
-        # print("reshaped_x", reshaped_x.shape)
-        # print("qw", qweight.shape)
-        assert layer.linear_kernel is not None
-        #if not layer.linear_kernel.preprocessed:
-        #    qweight1 = layer.linear_kernel.preprocessor(qweight)
-        #    qweight.copy_(qweight1)
-        #    layer.linear_kernel.preprocessed = True
-        out = layer.linear_kernel.apply_tensors(reshaped_x, qweight, scales, qzeros)
-        if bias is not None:
-            out.add_(bias)
+        m, _ = reshaped_x.shape
+        if m >= 128:
+            out = awq_gemm_triton(reshaped_x, qweight, scales, qzeros, 1, 128, 128, 32)
+        elif m >= 64:
+            out = awq_gemm_triton(reshaped_x, qweight, scales, qzeros, 1, 64, 64, 32)
+        elif m >= 32:
+            out = awq_gemm_triton(reshaped_x, qweight, scales, qzeros, 4, 32, 128, 64)
+        else:
+            out = awq_gemm_triton(reshaped_x, qweight, scales, qzeros, 8, 16, 128, 64)
         return out.reshape(out_shape)
