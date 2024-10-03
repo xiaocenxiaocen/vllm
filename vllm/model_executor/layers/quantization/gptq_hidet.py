@@ -4,19 +4,23 @@
 from typing import Any, Dict, List, Optional
 
 import torch
+from torch.nn import Parameter
 
 from vllm import _custom_ops as ops
 from vllm.logger import init_logger
 from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase, LinearKernelBase
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
-from vllm.model_executor.parameter import (GroupQuantScaleParameter,
-                                           PackedvLLMParameter)
-from vllm.model_executor.layers.quantization.utils.marlin_utils import replace_tensor
+from vllm.model_executor.layers.quantization.utils.marlin_utils import marlin_make_empty_g_idx
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from .weight_utils import preprocess_weight, cast_u4_to_f16_interleaved
-from .hidet_kernel import w4a16_linear
+from .weight_utils import reconstruct_21bit, weight_quantization_subbyte
+from .hidet_w234_kernel import w2a16_linear, w3a16_linear, w4a16_linear
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.model_executor.parameter import (ChannelQuantScaleParameter,
+                                           GroupQuantScaleParameter,
+                                           PackedColumnParameter,
+                                           PackedvLLMParameter,
+                                           RowvLLMParameter)
 from vllm.scalar_type import scalar_types
 
 
@@ -27,8 +31,8 @@ class GPTQHidetConfig(QuantizationConfig):
     """Config class for GPTQ Marlin"""
 
     TYPE_MAP = {
-        (3, True): scalar_types.uint4,
-        (4, True): scalar_types.uint8,
+        (3, True): scalar_types.uint32,
+        (4, True): scalar_types.uint4,
     }
 
     def __init__(
@@ -44,6 +48,7 @@ class GPTQHidetConfig(QuantizationConfig):
             # (since we have only one group per output channel)
             desc_act = False
 
+        self.weight_bits = weight_bits
         self.pack_factor = 32 // weight_bits  # packed into int32
         self.group_size = group_size
         self.desc_act = desc_act
@@ -114,9 +119,7 @@ class GPTQHidetConfig(QuantizationConfig):
     ) -> Optional["GPTQHidetLinearMethod"]:
         if isinstance(layer, LinearBase) or (isinstance(layer, ParallelLMHead)
                                              and self.lm_head_quantized):
-            return GPTQMarlinLinearMethod(self)
-        elif isinstance(layer, FusedMoE):
-            return GPTQMarlinMoEMethod(self)
+            return GPTQHidetLinearMethod(self)
         return None
 
     def get_scaled_act_names(self) -> List[str]:
@@ -131,6 +134,9 @@ class GPTQHidetConfig(QuantizationConfig):
         sym = quant_config.get("sym", None)
         desc_act = quant_config.get("desc_act", None)
 
+        if desc_act:
+            return False
+
         if quant_method != "gptq":
             return False
 
@@ -141,24 +147,43 @@ class GPTQHidetConfig(QuantizationConfig):
 
         if (num_bits, sym) not in cls.TYPE_MAP:
             return False
-
-        return check_marlin_supported(quant_type=cls.TYPE_MAP[(num_bits, sym)],
-                                      group_size=group_size)
+        return True
 
 
-class GPTQMarlinLinearMethod(LinearMethodBase):
-    """Linear method for GPTQ Marlin.
+class GPTQLinearKernel(LinearKernelBase):
+    """Linear kernel for AWQ
+    """
+    def __init__(self, input_size: int, output_size: int, group_size: int, bit_width: int = 4):
+        if bit_width == 4:
+            self.linear_kernel = w4a16_linear("quant", input_size, output_size, group_size)
+        else:
+            assert bit_width == 3
+            self.linear_kernel = w3a16_linear("quant", input_size, output_size, group_size)
+
+    def apply_tensors(self, *tensors: torch.Tensor):
+        return self.linear_kernel(*tensors)
+
+
+class GPTQHidetLinearMethod(LinearMethodBase):
+    """Linear method for GPTQ Hidet.
 
     Args:
-        quant_config: The GPTQ Marlin quantization config.
+        quant_config: The GPTQ Hidet quantization config.
     """
 
-    def __init__(self, quant_config: GPTQMarlinConfig) -> None:
+    def __init__(self, quant_config: GPTQHidetConfig) -> None:
         self.quant_config = quant_config
+        self.weight_bits = quant_config.weight_bits
 
-        # Verify supported on platform.
-        verify_marlin_supported(quant_type=self.quant_config.quant_type,
-                                group_size=self.quant_config.group_size)
+    def create_linear_kernel(
+        self,
+        input_size_per_partition: int,
+        output_partition_sizes: List[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype
+    ) -> LinearKernelBase:
+        return GPTQLinearKernel(input_size_per_partition, sum(output_partition_sizes), self.quant_config.group_size, self.weight_bits)
 
     def create_weights(
         self,
@@ -175,33 +200,16 @@ class GPTQMarlinLinearMethod(LinearMethodBase):
         output_size_per_partition = sum(output_partition_sizes)
         is_row_parallel = input_size != input_size_per_partition
         weight_loader = extra_weight_attrs.get("weight_loader")
+        assert not is_row_parallel
+
+        scales_and_zp_input_dim = 0
+        scales_and_zp_size = input_size_per_partition // group_size
 
         # Normalize group_size
         if self.quant_config.group_size != -1:
             group_size = self.quant_config.group_size
         else:
             group_size = input_size
-
-        verify_marlin_supports_shape(
-            output_size_per_partition=output_size_per_partition,
-            input_size_per_partition=input_size_per_partition,
-            input_size=input_size,
-            group_size=group_size,
-        )
-
-        # Determine sharding
-        if marlin_repeat_scales_on_all_ranks(self.quant_config.desc_act,
-                                             self.quant_config.group_size,
-                                             is_row_parallel):
-            # By setting scale_dim == None, weight_loader will
-            # repeat the scales on each GPU in TP>1 case.
-            scales_and_zp_input_dim = None
-            scales_and_zp_size = input_size // group_size
-        else:
-            # By setting scale_dim == 0, weight_loader will
-            # shard the scales in TP>1 case.
-            scales_and_zp_input_dim = 0
-            scales_and_zp_size = input_size_per_partition // group_size
 
         # Quantized weights
         qweight = PackedvLLMParameter(
@@ -272,8 +280,6 @@ class GPTQMarlinLinearMethod(LinearMethodBase):
         layer.input_size_per_partition = input_size_per_partition
         layer.output_size_per_partition = output_size_per_partition
         layer.input_size = input_size
-        layer.is_k_full = marlin_is_k_full(self.quant_config.desc_act,
-                                           is_row_parallel)
 
     # Checkpoints are serialized in AutoGPTQ format, which is different from the
     # marlin format. This function is called after the weights are loaded.
@@ -285,41 +291,22 @@ class GPTQMarlinLinearMethod(LinearMethodBase):
         layer.qweight = Parameter(layer.qweight.data, requires_grad=False)
         layer.scales = Parameter(layer.scales.data, requires_grad=False)
 
-        # Allocate marlin workspace
-        layer.workspace = marlin_make_workspace(
-            layer.output_size_per_partition, device)
-
         # Handle sorting for activation reordering if needed.
-        if self.quant_config.desc_act:
-            g_idx, g_idx_sort_indices = marlin_sort_g_idx(layer.g_idx)
-            layer.g_idx_sort_indices = g_idx_sort_indices
-            replace_tensor(layer, "g_idx", g_idx)
-        else:
-            layer.g_idx = marlin_make_empty_g_idx(device)
-            layer.g_idx_sort_indices = marlin_make_empty_g_idx(device)
+        layer.g_idx = marlin_make_empty_g_idx(device)
+        layer.g_idx_sort_indices = marlin_make_empty_g_idx(device)
 
         # No zero-point
         layer.zp = marlin_make_empty_g_idx(device)
 
-        # Repack weights from autogptq format to marlin format.
-        marlin_qweight = ops.gptq_marlin_repack(
-            layer.qweight,
-            perm=layer.g_idx_sort_indices,
-            size_k=layer.input_size_per_partition,
-            size_n=layer.output_size_per_partition,
-            num_bits=self.quant_config.quant_type.size_bits,
-        )
-        replace_tensor(layer, "qweight", marlin_qweight)
-
-        # Permute scales from autogptq format to marlin format.
-        marlin_scales = marlin_permute_scales(
-            layer.scales,
-            size_k=(layer.input_size if self.quant_config.desc_act else
-                    layer.input_size_per_partition),
-            size_n=layer.output_size_per_partition,
-            group_size=self.quant_config.group_size,
-        )
-        replace_tensor(layer, "scales", marlin_scales)
+        if self.weight_bits == 3:
+            w2, w1 = reconstruct_21bit(layer.qweight)
+            hidet_qweight2 = weight_quantization_subbyte(w2, 2)
+            hidet_qweight1 = weight_quantization_subbyte(w1, 1)
+            del layer.qweight
+            del w2
+            del w1
+            layer.qweight2 = Parameter(hidet_qweight2, requires_grad=False)
+            layer.qweight1 = Parameter(hidet_qweight1, requires_grad=False)
 
     def apply(
         self,
@@ -327,17 +314,27 @@ class GPTQMarlinLinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        return apply_gptq_marlin_linear(
-            input=x,
-            weight=layer.qweight,
-            weight_scale=layer.scales,
-            weight_zp=layer.zp,
-            g_idx=layer.g_idx,
-            g_idx_sort_indices=layer.g_idx_sort_indices,
-            workspace=layer.workspace,
-            wtype=self.quant_config.quant_type,
-            output_size_per_partition=layer.output_size_per_partition,
-            input_size_per_partition=layer.input_size_per_partition,
-            is_k_full=layer.is_k_full,
-            bias=bias,
-        )
+        if self.weight_bits == 3:
+            qweight2 = layer.qweight2
+            qweight1 = layer.qweight1
+            scales = layer.scales
+            pack_factor = 16
+            out_shape = x.shape[:-1] + (qweight2.shape[-1] * pack_factor,)
+            reshaped_x = x.reshape(-1, x.shape[-1])
+
+            assert layer.linear_kernel is not None
+            out = layer.linear_kernel.apply_tensors(reshaped_x, qweight2, qweight1, scales)
+            if bias is not None:
+                out.add_(bias)
+            return out.reshape(out_shape)
+        qweight = layer.qweight
+        scales = layer.scales
+        pack_factor = self.quant_config.pack_factor
+        out_shape = x.shape[:-1] + (qweight.shape[-1] * pack_factor,)
+        reshaped_x = x.reshape(-1, x.shape[-1])
+
+        assert layer.linear_kernel is not None
+        out = layer.linear_kernel.apply_tensors(reshaped_x, qweight, scales)
+        if bias is not None:
+            out.add_(bias)
+        return out.reshape(out_shape)

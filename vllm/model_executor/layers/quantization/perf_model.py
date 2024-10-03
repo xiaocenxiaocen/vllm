@@ -236,11 +236,10 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
                 f"max_smem_gbps: {self.max_smem_gbps}"
             )
 
-    def predict(self, config: Config, m: int, n: int, k: int, groups: int, *args) -> float:
+    def predict(self, config: Config, m: int, n: int, k: int, groups: int, bdtype_nbits: int = 4, *args) -> float:
         from hidet.ir.dtypes import f16, u4, f32
 
         adtype = f16
-        bdtype = u4
         cdtype = f32
         ddtype = f16
         scale_dtype = f16
@@ -264,13 +263,13 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
         threads_per_sm = prop.maxThreadsPerMultiProcessor
         smem_per_cta_per_stage = (
             block_m * block_k * adtype.nbytes
-            + block_n * block_k * bdtype.nbits // 8
+            + block_n * block_k * bdtype_nbits // 8
             + block_n * (block_k + groups - 1) // groups * (scale_dtype.nbytes + bias_dtype.nbytes)
         )
         smem_per_cta = smem_per_cta_per_stage * stages
         reg_count_per_thread = (
             config.a_elements * 2 * adtype.nbytes
-            + config.b_elements * 2 * bdtype.nbits // 8
+            + config.b_elements * 2 * bdtype_nbits // 8
             + config.c_elements * cdtype.nbytes
             + config.scale_elements(groups) * 2 * (scale_dtype.nbytes + bias_dtype.nbytes)
         ) // f32.nbytes
@@ -302,7 +301,7 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
         # a + b + scale + zeros
         gmem_load_per_stage = (
             block_m * block_k * adtype.nbytes
-            + block_n * block_k * bdtype.nbits // 8
+            + block_n * block_k * bdtype_nbits // 8
             + block_n * (block_k + groups - 1) // groups * (scale_dtype.nbytes + bias_dtype.nbytes)
         )
         if stages == 1:
@@ -318,7 +317,7 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
             latency_compute_per_tile = latency_tc_per_tile + latency_simd_per_tile
             smem_load_per_tile = (
                 block_m * k_tile * adtype.nbytes
-                + block_n * k_tile * bdtype.nbits // 8
+                + block_n * k_tile * bdtype_nbits // 8
                 + block_n * (scale_dtype.nbytes + bias_dtype.nbytes)
             )
             latency_smem_per_tile = smem_load_per_tile / smem_gbps_per_cta / 1e9
@@ -341,7 +340,7 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
             # first load
             smem_load_per_tile = (
                 block_m * k_tile * adtype.nbytes
-                + block_n * k_tile * bdtype.nbits // 8
+                + block_n * k_tile * bdtype_nbits // 8
                 + block_n * (scale_dtype.nbytes + bias_dtype.nbytes)
             )
             latency_prologue = (
@@ -358,7 +357,7 @@ class FpAIntBGemmAnalyticalModel(AnalyticalModel):
             latency_compute_per_tile = latency_tc_per_tile + latency_simd_per_tile
             smem_load_per_tile = (
                 block_m * k_tile * adtype.nbytes
-                + block_n * k_tile * bdtype.nbits // 8
+                + block_n * k_tile * bdtype_nbits // 8
                 + block_n * (scale_dtype.nbytes + bias_dtype.nbytes)
             )
             latency_smem_per_tile = smem_load_per_tile / smem_gbps_per_cta / 1e9

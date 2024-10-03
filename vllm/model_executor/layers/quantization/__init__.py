@@ -29,6 +29,7 @@ from vllm.model_executor.layers.quantization.neuron_quant import (
 from vllm.model_executor.layers.quantization.qqq import QQQConfig
 from vllm.model_executor.layers.quantization.tpu_int8 import Int8TpuConfig
 from vllm.model_executor.layers.quantization.awq_triton_linear import AWQTritonConfig
+from vllm.model_executor.layers.quantization.gptq_hidet import GPTQHidetConfig
 
 QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     "aqlm": AQLMConfig,
@@ -42,6 +43,7 @@ QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     # override_quantization_method(..)
     "marlin": MarlinConfig,
     "gguf": GGUFConfig,
+    "gptq_hidet": GPTQHidetConfig,
     "gptq_marlin_24": GPTQMarlin24Config,
     "gptq_marlin": GPTQMarlinConfig,
     "awq_triton": AWQTritonConfig,
