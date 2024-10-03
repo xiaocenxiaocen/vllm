@@ -170,8 +170,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 4, parallel_k_parts))
@@ -189,8 +189,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (2, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (2, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 4, parallel_k_parts))
@@ -207,8 +207,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (4, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (4, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 1, parallel_k_parts))

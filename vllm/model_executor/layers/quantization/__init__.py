@@ -46,7 +46,7 @@ QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     "gptq_hidet": GPTQHidetConfig,
     "gptq_marlin_24": GPTQMarlin24Config,
     "gptq_marlin": GPTQMarlinConfig,
-    "awq_triton": AWQTritonConfig,
+    #"awq_triton": AWQTritonConfig,
     "awq_hidet": AWQHidetConfig,
     "awq_marlin": AWQMarlinConfig,
     "gptq": GPTQConfig,

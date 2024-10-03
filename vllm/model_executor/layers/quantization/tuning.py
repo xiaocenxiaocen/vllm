@@ -48,6 +48,8 @@ class LinearCache(FileCache):
                 for _ in range(num_cache_items):
                     key = pickle.load(f)
                     value = pickle.load(f)
+                    print(self.cache_file)
+                    print(key, value)
                     self.cache[key] = value
 
     def save(self):

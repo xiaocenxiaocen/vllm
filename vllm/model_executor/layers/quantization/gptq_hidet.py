@@ -3,6 +3,7 @@
 # pylint: disable=missing-function-docstring
 from typing import Any, Dict, List, Optional
 
+from fractions import Fraction
 import torch
 from torch.nn import Parameter
 
@@ -31,7 +32,7 @@ class GPTQHidetConfig(QuantizationConfig):
     """Config class for GPTQ Marlin"""
 
     TYPE_MAP = {
-        (3, True): scalar_types.uint32,
+        (3, True): scalar_types.uint4,
         (4, True): scalar_types.uint4,
     }
 
@@ -49,7 +50,7 @@ class GPTQHidetConfig(QuantizationConfig):
             desc_act = False
 
         self.weight_bits = weight_bits
-        self.pack_factor = 32 // weight_bits  # packed into int32
+        self.pack_factor = Fraction(32, weight_bits)  # packed into int32
         self.group_size = group_size
         self.desc_act = desc_act
         self.lm_head_quantized = lm_head_quantized
@@ -96,7 +97,7 @@ class GPTQHidetConfig(QuantizationConfig):
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg,
                                      user_quant) -> Optional[str]:
-        can_convert = cls.is_gptq_marlin_compatible(hf_quant_cfg)
+        can_convert = cls.is_gptq_hidet_compatible(hf_quant_cfg)
 
         is_valid_user_quant = (user_quant is None or user_quant == "marlin"
                                or user_quant == "gptq_marlin")
@@ -200,16 +201,20 @@ class GPTQHidetLinearMethod(LinearMethodBase):
         output_size_per_partition = sum(output_partition_sizes)
         is_row_parallel = input_size != input_size_per_partition
         weight_loader = extra_weight_attrs.get("weight_loader")
-        assert not is_row_parallel
-
-        scales_and_zp_input_dim = 0
-        scales_and_zp_size = input_size_per_partition // group_size
+        is_channelwise = self.quant_config.group_size == -1
 
         # Normalize group_size
         if self.quant_config.group_size != -1:
             group_size = self.quant_config.group_size
         else:
             group_size = input_size
+
+        if is_channelwise and is_row_parallel:
+            scales_and_zp_input_dim = None
+            scales_and_zp_size = input_size // group_size
+        else:
+            scales_and_zp_input_dim = 0
+            scales_and_zp_size = input_size_per_partition // group_size
 
         # Quantized weights
         qweight = PackedvLLMParameter(

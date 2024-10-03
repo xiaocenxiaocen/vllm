@@ -28,7 +28,7 @@ from hidet.ir.cute.ops import (
 from hidet.ir.cute import auto_layout
 from hidet.ir.cute import composition, coalesce, logical_divide
 
-from hidet.lang.types import i32, f32, bf16, f16, u4, u2, u1
+from hidet.lang.types import u32, i32, f32, bf16, f16, u4, u2, u1
 from hidet.utils.py import cdiv
 
 
@@ -321,42 +321,53 @@ def preprocess_weight(weight: torch.Tensor):
     return w
 
 
-def reconstruct_nbits(weight: torch.Tensor, nbits: int):
+def reconstruct_21bit(weight: torch.Tensor):
     m, n = weight.shape
+    print(m, n)
     storage_dtype = i32
-    pack_factor3 = i32.nbits // 3
-    np = n * pack_factor3
-    pack_factor = storage_dtype.nbits // nbits 
-    w = torch.empty(m, np, dtype=torch.float16, device="cuda")
+    mp = m * storage_dtype.nbits // 3
+    w2 = torch.empty(mp, n, dtype=torch.float16, device="cuda")
+    w1 = torch.empty(mp, n, dtype=torch.float16, device="cuda")
     threads = 128
+    bn = threads
 
     with hidet.script_module() as script_module:
 
         @hidet.script
-        def func(wq: i32[m, n], w: f16[m, np]):
+        def func(wq: u32[m, n], wf2: f16[mp, n], wf1: f16[mp, n]):
             attrs.func_kind = "cuda_kernel"
             attrs.cuda.block_dim = threads
-            attrs.cuda.grid_dim = cdiv(m*n, threads)
+            attrs.cuda.grid_dim = cdiv(n, threads), cdiv(mp, 32)
             attrs.cuda.dynamic_smem_bytes = 0
 
-            i = threadIdx.x + blockIdx.x * threads
-            if i > m * n:
+            column = threadIdx.x + blockIdx.x * bn
+            row = blockIdx.y * 32
+            if column >= n:
                 return
-            m_idx = i // n
-            n_idx = i % n
 
-            wq_val: i32 = wq[m_idx, n_idx]
-            for i in range(pack_factor3):
-                wv = (wq_val >> (i * 3)) & 0x7 + 4
-                if nbits == 2:
-                    wv_f16 = f16((wv & 0x6) >> 2) 
-                elif nbits == 1:
-                    wv_f16 = f16((wv & 0x1)) 
-                w[m_idx, n_idx * pack_factor3 + i] = wv_f16     
+            w1: u32 = wq[(blockIdx.y * 3), column]
+            w2: u32 = wq[(blockIdx.y * 3 + 1), column]
+            w3: u32 = wq[(blockIdx.y * 3 + 2), column]
+            for i in range(32):
+                w_item: u32 = 0
+                if i == 10:
+                    w_item = (w1 >> 30) | ((w2 << 2) & 0x4)
+                elif i == 21:
+                    w_item = (w1 >> 31) | ((w3 << 1) & 0x6)
+                elif i < 10:
+                    w_item = ((w1 >> (i * 3)) & 0x7)
+                elif i < 21:
+                    w_item = ((w2 >> (i * 3 - 32)) & 0x7)
+                else:
+                    w_item = ((w3 >> (i * 3 - 64)) & 0x7)
+                wv2 = f16((w_item & 0x6) >> 1) 
+                wv1 = f16((w_item & 0x1)) 
+                wf2[row + i, column] = wv2     
+                wf1[row + i, column] = wv1    
 
     func = script_module.build()
-    wrapper_func(func, weight, w)
-    return w
+    wrapper_func(func, weight, w2, w1)
+    return w2, w1
 
 
 def weight_quantization_subbyte(weight: torch.Tensor, nbits: int):
@@ -368,8 +379,7 @@ def weight_quantization_subbyte(weight: torch.Tensor, nbits: int):
     m, n = weight.shape
     storage_dtype = i32
     pack_factor = storage_dtype.nbits // weight_dtype.nbits
-    w = torch.empty(m, n // pack_factor, dtype=storage_dtype, device="cuda")
-    assert m % bm == 0 and n % bn == 0
+    w = torch.empty(m, n // pack_factor, dtype=torch.int32, device="cuda")
 
     if not weight.is_contiguous():
         weight = weight.contiguous()
@@ -377,14 +387,15 @@ def weight_quantization_subbyte(weight: torch.Tensor, nbits: int):
     bm = 128
     bn = 128
     threads = 128
- 
-    basic_block = TensorLayout(((8, 2), (2, 4, 2)), ((32, 2), (1, 8, 4)))
+    assert m % bm == 0 and n % bn == 0
+    
+    basic_block = TensorLayout(((8, 2, 2), (2, 4, 2)), ((64, 2, 8), (1, 16, 4)))
     m_mode, n_mode = basic_block
     n_shape = n_mode.shape + (m // n_mode.size(),)
     n_stride = n_mode.stride + (basic_block.cosize(),)
     n_mode = TensorLayout(n_shape, n_stride)
     m_shape = m_mode.shape + (n // m_mode.size(),)
-    cosize = m // 16 * basic_block.cosize()
+    cosize = m // 32 * basic_block.cosize()
     m_stride = m_mode.stride + (cosize,)
     m_mode = TensorLayout(m_shape, m_stride)
     gmem_layout = make_layout(n_mode, m_mode)
@@ -433,22 +444,37 @@ def weight_quantization_subbyte(weight: torch.Tensor, nbits: int):
     return w
 
 
-def bench(f, warmup=10, iter=50):
+def bench(f, warmup=5, number=1, repeat=31):
     import time
+    import numpy as np
 
-    for i in range(warmup + iter):
+    results = []
+    for _ in range(warmup):
         f()
-        # We do not synchronize here in order to hide the kernel launch overhead during benchmarkining as this will also
-        # happen during realistic model inference as many launches are submitted to the kernel queue.
-        if i == warmup - 1:
-            torch.cuda.synchronize()
-            tick = time.time()
-    torch.cuda.synchronize()
-    res = (time.time() - tick) / iter
-    # Make sure there is enough to "cool down" the GPU in between benchmarks to avoid throttling for later runs when
-    # we execute many benchmarks consecutively
-    time.sleep(1.0)
-    return res * 1000.0
+        torch.cuda.synchronize()
+
+    for i in range(repeat):
+        torch.cuda.synchronize()
+        start_time = time.time_ns()
+        for _ in range(number):
+            f()
+        torch.cuda.synchronize()
+        end_time = time.time_ns()
+        results.append((end_time - start_time) / 10**6 / number)
+    return float(np.median(results))
+    #for i in range(warmup + iter):
+    #    f()
+    #    # We do not synchronize here in order to hide the kernel launch overhead during benchmarkining as this will also
+    #    # happen during realistic model inference as many launches are submitted to the kernel queue.
+    #    if i == warmup - 1:
+    #        torch.cuda.synchronize()
+    #        tick = time.time()
+    #torch.cuda.synchronize()
+    #res = (time.time() - tick) / iter
+    ## Make sure there is enough to "cool down" the GPU in between benchmarks to avoid throttling for later runs when
+    ## we execute many benchmarks consecutively
+    #time.sleep(1.0)
+    #return res * 1000.0
 
 
 def canonicalize(layout: TensorLayout):

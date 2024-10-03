@@ -61,8 +61,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 4, parallel_k_parts))
@@ -71,8 +71,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (1, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 2), TensorLayout((1, 2)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 256, 1, parallel_k_parts))
@@ -80,8 +80,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (2, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (2, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 4, parallel_k_parts))
@@ -98,8 +98,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (4, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (4, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 128, 1, parallel_k_parts))
@@ -108,8 +108,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (6, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 4))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (6, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
@@ -118,8 +118,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 4))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 4), TensorLayout((1, 4)), (1, 2))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
@@ -138,8 +138,8 @@ def register_configs():
     a = TensorLayout(((4, 8), (2, 2)), ((16, 1), (8, 64)))
     b = TensorLayout(((4, 8), (2, 2, 2)), ((32, 1), (16, 8, 128)))
     c = TensorLayout(((4, 8), (2, 2)), ((2, 8), (1, 64)))
-    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 1))
-    warp_in_threadblock = Level("warp", "thread_block", (1, 8), TensorLayout((1, 8)), (2, 2))
+    mma_atom = MmaAtom("warp", (8, 16, 16), a, b, c, c, (8, 2))
+    warp_in_threadblock = Level("warp", "thread_block", (1, 8), TensorLayout((1, 8)), (2, 1))
     tiled_mma = TiledMma(mma_atom, [warp_in_threadblock])
     for parallel_k_parts in PARALLEL_K_PARTS:
         _predefined_config.append(Config(tiled_mma, 32, 1, parallel_k_parts))
@@ -174,7 +174,7 @@ class FpAIntSubByteBGemm:
         
         runtime_api.set_symbol_value(self.m_symbol_name, m)
         m_clip = min(max(m, 8), 1024)
-        m_roundup = min(i for i in [8, 16, 32, 48, 64, 128, 1024] if i >= m_clip)
+        m_roundup = min(i for i in [8, 1024] if i >= m_clip)
         assert m_roundup in self.cache
         config, func = self.cache[m_roundup]
         bm, bn, _ = config.thread_block_shape
@@ -194,7 +194,7 @@ class FpAIntSubByteBGemm:
 
         runtime_api.set_symbol_value(self.m_symbol_name, m)
         m_clip = min(max(m, 8), 1024)
-        m_roundup = min(i for i in [8, 16, 32, 48, 64, 128, 1024] if i >= m_clip)
+        m_roundup = min(i for i in [8, 1024] if i >= m_clip)
         assert m_roundup in self.cache
         config, func = self.cache[m_roundup]
         bm, bn, _ = config.thread_block_shape
@@ -215,13 +215,14 @@ class FpAIntSubByteBGemm:
     def _deduce_gmem_layout(self, block_k: int, block_n: int, stages: int = 1):
         # magic gmem and smem layout that coalesce global memory load and
         # resolve shared memory bank conflict
-        basic_block = TensorLayout(((8, 2), (2, 4, 2)), ((32, 2), (1, 8, 4)))
+        #basic_block = TensorLayout(((8, 2), (2, 4, 2)), ((32, 2), (1, 8, 4)))
+        basic_block = TensorLayout(((8, 2, 2), (2, 4, 2)), ((64, 2, 8), (1, 16, 4)))
         m_mode, n_mode = basic_block
         n_shape = n_mode.shape + (block_k // n_mode.size(),)
         n_stride = n_mode.stride + (basic_block.cosize(),)
         n_mode_ = TensorLayout(n_shape, n_stride)
         m_shape = m_mode.shape + (block_n // m_mode.size(),)
-        cosize = block_k // 16 * basic_block.cosize()
+        cosize = block_k // 32 * basic_block.cosize()
         m_stride = m_mode.stride + (cosize,)
         m_mode_ = TensorLayout(m_shape, m_stride)
         if stages > 1:
@@ -235,7 +236,7 @@ class FpAIntSubByteBGemm:
         n_stride = n_mode.stride + (basic_block.cosize(),)
         n_mode_ = TensorLayout(n_shape, n_stride)
         m_shape = m_mode.shape + (block_n // m_mode.size(),)
-        cosize = self.k // 16 * basic_block.cosize()
+        cosize = self.k // 32 * basic_block.cosize()
         m_stride = m_mode.stride + (cosize,)
         m_mode_ = TensorLayout(m_shape, m_stride)
         gmem_layout = make_layout(m_mode_, n_mode_)
@@ -276,7 +277,7 @@ class FpAIntSubByteBGemm:
         k = self.k
         n = self.n
         group_size = self.group_size
-        for M in [8, 16, 32, 48, 64, 128, 1024]:
+        for M in [8, 1024]:
             if self.tuning_cache is not None and self.tuning_cache.contains(M, n, k):
                 min_cfg = self.tuning_cache.get(M, n, k)
                 for m in modules:
@@ -295,7 +296,7 @@ class FpAIntSubByteBGemm:
                 time = model.predict(cfg, M, n, k, group_size, self.weight_bits)
                 module2time[m] = time
 
-            truncate = 4
+            truncate = 10
             sorted_module = sorted(modules, key=lambda m: module2time[m])
             candidates = sorted_module[:truncate]
             min_time = None
@@ -334,6 +335,7 @@ class FpAIntSubByteBGemm:
                     min_time = time
                     min_cfg = cfg
                     min_func = func
+            print("func2", M, n, k, min_cfg)
             self.cache[M] = (min_cfg, min_func)
             if self.tuning_cache is not None:
                 self.tuning_cache.put(M, n, k, min_cfg)
@@ -374,7 +376,6 @@ class FpAIntSubByteBGemm:
         n = self.n
         k = self.k
         group_size = self.group_size
-        wdtype = self.weight_dtype
         bm, bn, _ = config.thread_block_shape
         threads = config.threads
         k_tile = config.k_tile
@@ -927,7 +928,7 @@ class FpAIntSubByteBGemm:
 
                         txrb2_f16 = cast(txrb2[:, :, ki % 2], f16)
                         txrb1_f16 = cast(txrb1[:, :, ki % 2], f16)
-                        txrb_f16 = txrsc[:, :, ki % 2] * (txrb2_f16 + txrb1_f16) 
+                        txrb_f16 = txrsc[:, :, ki % 2] * (f16(2.0) * txrb2_f16 + txrb1_f16) 
                         mma(tiled_mma, tr_c, txra[:, :, ki % 2], txrb_f16, tr_c)
 
                 k_part = blockIdx.x % parallel_k_parts
@@ -1224,7 +1225,7 @@ atexit.register(unload_tuning_cache)
 
 def w2a16_linear(name: str, input_feats: int, output_feats: int, group_size: int):
     hidet.option.search_space(2)
-    return FpAIntSubByteBGemm(name, input_feats, output_feats, group_size, 2, tuning_cache=gptq3_tuning_cache)
+    return FpAIntSubByteBGemm(name, input_feats, output_feats, group_size, 2, tuning_cache=gptq2_tuning_cache)
 
 
 def w3a16_linear(name: str, input_feats: int, output_feats: int, group_size: int):
