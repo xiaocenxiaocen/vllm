@@ -14,7 +14,7 @@ from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.quantization.utils.marlin_utils import marlin_make_empty_g_idx
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from .weight_utils import reconstruct_21bit, weight_quantization_subbyte
+from .weight_utils import reconstruct_24bit, reconstruct_21bit, weight_quantization_subbyte
 from .hidet_w234_kernel import w2a16_linear, w3a16_linear, w4a16_linear
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.model_executor.parameter import (ChannelQuantScaleParameter,
@@ -31,10 +31,7 @@ logger = init_logger(__name__)
 class GPTQHidetConfig(QuantizationConfig):
     """Config class for GPTQ Marlin"""
 
-    TYPE_MAP = {
-        (3, True): scalar_types.uint4,
-        (4, True): scalar_types.uint4,
-    }
+    TYPE_MAP = [(2, True), (3, True), (4, True)]
 
     def __init__(
         self,
@@ -59,10 +56,8 @@ class GPTQHidetConfig(QuantizationConfig):
             raise ValueError("Unsupported quantization config: "
                              f"bits={weight_bits}, sym={is_sym}")
 
-        self.quant_type = self.TYPE_MAP[(weight_bits, is_sym)]
-
     def __repr__(self) -> str:
-        return (f"GPTQMarlinConfig(quant_type={self.quant_type}, "
+        return (f"GPTQMarlinConfig(weight_bits={self.weight_bits}, "
                 f"group_size={self.group_size}, "
                 f"desc_act={self.desc_act}, "
                 f"lm_head_quantized={self.lm_head_quantized})")
@@ -135,15 +130,15 @@ class GPTQHidetConfig(QuantizationConfig):
         sym = quant_config.get("sym", None)
         desc_act = quant_config.get("desc_act", None)
 
-        if desc_act:
-            return False
-
         if quant_method != "gptq":
             return False
 
         # If we cannot find the info needed in the config, cannot convert.
         if (num_bits is None or group_size is None or sym is None
                 or desc_act is None):
+            return False
+
+        if desc_act:
             return False
 
         if (num_bits, sym) not in cls.TYPE_MAP:
@@ -157,9 +152,11 @@ class GPTQLinearKernel(LinearKernelBase):
     def __init__(self, input_size: int, output_size: int, group_size: int, bit_width: int = 4):
         if bit_width == 4:
             self.linear_kernel = w4a16_linear("quant", input_size, output_size, group_size)
-        else:
-            assert bit_width == 3
+        elif bit_width == 3:
             self.linear_kernel = w3a16_linear("quant", input_size, output_size, group_size)
+        else: 
+            assert bit_width == 2
+            self.linear_kernel = w2a16_linear("quant", input_size, output_size, group_size)
 
     def apply_tensors(self, *tensors: torch.Tensor):
         return self.linear_kernel(*tensors)
@@ -202,6 +199,7 @@ class GPTQHidetLinearMethod(LinearMethodBase):
         is_row_parallel = input_size != input_size_per_partition
         weight_loader = extra_weight_attrs.get("weight_loader")
         is_channelwise = self.quant_config.group_size == -1
+        assert not is_row_parallel
 
         # Normalize group_size
         if self.quant_config.group_size != -1:
@@ -312,6 +310,12 @@ class GPTQHidetLinearMethod(LinearMethodBase):
             del w1
             layer.qweight2 = Parameter(hidet_qweight2, requires_grad=False)
             layer.qweight1 = Parameter(hidet_qweight1, requires_grad=False)
+        else:
+            w = reconstruct_24bit(layer.qweight, self.weight_bits)
+            hidet_qweight = weight_quantization_subbyte(w, self.weight_bits)
+            del layer.qweight
+            del w
+            layer.qweight = Parameter(hidet_qweight, requires_grad=False)
 
     def apply(
         self,
@@ -334,10 +338,13 @@ class GPTQHidetLinearMethod(LinearMethodBase):
             return out.reshape(out_shape)
         qweight = layer.qweight
         scales = layer.scales
-        pack_factor = self.quant_config.pack_factor
+        pack_factor = 32 // self.quant_config.weight_bits 
         out_shape = x.shape[:-1] + (qweight.shape[-1] * pack_factor,)
         reshaped_x = x.reshape(-1, x.shape[-1])
-
+        
+        #print(qweight.shape)
+        #print(qweight.dtype)
+        #raise RuntimeError()
         assert layer.linear_kernel is not None
         out = layer.linear_kernel.apply_tensors(reshaped_x, qweight, scales)
         if bias is not None:

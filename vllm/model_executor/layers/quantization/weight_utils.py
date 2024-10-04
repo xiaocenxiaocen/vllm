@@ -370,8 +370,65 @@ def reconstruct_21bit(weight: torch.Tensor):
     return w2, w1
 
 
+def reconstruct_24bit(weight: torch.Tensor, nbits: int = 4):
+    m, n = weight.shape
+    storage_dtype = i32
+    mp = m * storage_dtype.nbits // nbits
+    w = torch.empty(mp, n, dtype=torch.float16, device="cuda")
+    threads = 128
+    bn = threads
+
+    with hidet.script_module() as script_module:
+
+        @hidet.script
+        def func(wq: u32[m, n], w: f16[mp, n]):
+            attrs.func_kind = "cuda_kernel"
+            attrs.cuda.block_dim = threads
+            attrs.cuda.grid_dim = cdiv(n, threads), cdiv(mp, 32)
+            attrs.cuda.dynamic_smem_bytes = 0
+
+            column = threadIdx.x + blockIdx.x * bn
+            row = blockIdx.y * 32
+            if column >= n:
+                return
+
+            if nbits == 2:
+                w1: u32 = wq[(blockIdx.y * 2), column]
+                w2: u32 = wq[(blockIdx.y * 2 + 1), column]
+                for i in range(32):
+                    w_item: u32 = 0
+                    if i < 16:
+                        w_item = ((w1 >> (i * 2)) & 0x3)
+                    else:
+                        w_item = ((w2 >> (i * 2 - 32)) & 0x3)
+                    wv = f16(w_item)
+                    w[row + i, column] = wv
+            elif nbits == 4:
+                w1: u32 = wq[(blockIdx.y * 4), column]
+                w2: u32 = wq[(blockIdx.y * 4 + 1), column]
+                w3: u32 = wq[(blockIdx.y * 4 + 2), column]
+                w4: u32 = wq[(blockIdx.y * 4 + 3), column]
+                for i in range(32):
+                    w_item: u32 = 0
+                    if i < 8:
+                        w_item = ((w1 >> (i * 4)) & 0xf)
+                    elif i < 16:
+                        w_item = ((w2 >> (i * 4 - 32)) & 0xf)
+                    elif i < 24:
+                        w_item = ((w3 >> (i * 4 - 64)) & 0xf)
+                    else:
+                        w_item = ((w4 >> (i * 4 - 96)) & 0xf)
+                    wv = f16(w_item)
+                    w[row + i, column] = wv
+    func = script_module.build()
+    wrapper_func(func, weight, w)
+    return w
+
+
 def weight_quantization_subbyte(weight: torch.Tensor, nbits: int):
-    if nbits == 2:
+    if nbits == 4:
+        weight_dtype = u4
+    elif nbits == 2:
         weight_dtype = u2
     else:
         assert nbits == 1

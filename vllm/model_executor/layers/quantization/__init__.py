@@ -43,7 +43,7 @@ QUANTIZATION_METHODS: Dict[str, Type[QuantizationConfig]] = {
     # override_quantization_method(..)
     "marlin": MarlinConfig,
     "gguf": GGUFConfig,
-    "gptq_hidet": GPTQHidetConfig,
+    #"gptq_hidet": GPTQHidetConfig,
     "gptq_marlin_24": GPTQMarlin24Config,
     "gptq_marlin": GPTQMarlinConfig,
     #"awq_triton": AWQTritonConfig,

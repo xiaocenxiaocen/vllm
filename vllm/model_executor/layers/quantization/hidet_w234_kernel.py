@@ -209,7 +209,7 @@ class FpAIntSubByteBGemm:
     def __call__(self, *args: torch.Tensor):
         if self.weight_bits == 3:
             return self.call3(*args)
-        elif self.weight_bits == 4:
+        elif self.weight_bits == 4 or self.weight_bits == 2:
             return self.call24(*args)
 
     def _deduce_gmem_layout(self, block_k: int, block_n: int, stages: int = 1):
@@ -263,7 +263,7 @@ class FpAIntSubByteBGemm:
             zeros = torch.randint(low=0, high=hi, size=(K // group_size, N), dtype=bias_dtype, device=device)
             return a, b2, b1, scale, zeros
         else:
-            factor = bdtype.itemsize * 8 // self.weight_dtype.nbits
+            factor = bdtype.itemsize * 8 // self.weight_bits
             a = torch.randint(low=lo, high=hi, size=(M, K), dtype=adtype, device=device)
             b = torch.randint(low=0, high=hi, size=(K, N // factor), dtype=bdtype, device=device)
             scale = torch.randint(low=-1, high=2, size=(K // group_size, N), dtype=scale_dtype, device=device)
@@ -680,7 +680,7 @@ class FpAIntSubByteBGemm:
                     copy(auto_copy(), txSb[:, :, 0], txrb[:, :, 0])
                     copy(auto_copy(), txSsc[:, :, 0], txrsc[:, :, 0])
 
-                    for ki in grid(k_tile_max, attrs="u+"):
+                    for ki in range(k_tile_max):
                         if ki < k_tile_max - 1:
                             copy(auto_copy(), txSa[:, :, ki + 1], txra[:, :, (ki + 1) % 2])
                             copy(auto_copy(), txSb[:, :, ki + 1], txrb[:, :, (ki + 1) % 2])
@@ -1116,7 +1116,7 @@ class FpAIntSubByteBGemm:
                 k_block_max = (ksize + bk - 1) // bk
                 k_tile_max = bk // k_tile
                 for ko in range(k_block_max):
-                    for ki in grid(k_tile_max, attrs="u+"):
+                    for ki in range(k_tile_max):
                         if ki == k_tile_max - 1:
                             # txSa_p = txSa[:, :, :, smem_pipe_read]
                             # txSb_p = txSb[:, :, :, smem_pipe_read]

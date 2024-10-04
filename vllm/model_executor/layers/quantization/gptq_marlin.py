@@ -7,7 +7,7 @@ from vllm import _custom_ops as ops
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
-from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
+from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase, LinearKernelBase,
                                                set_weight_attrs)
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
@@ -165,6 +165,16 @@ class GPTQMarlinLinearMethod(LinearMethodBase):
         # Verify supported on platform.
         verify_marlin_supported(quant_type=self.quant_config.quant_type,
                                 group_size=self.quant_config.group_size)
+
+    def create_linear_kernel(
+        self,
+        input_size_per_partition: int,
+        output_partition_sizes: List[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype
+    ) -> LinearKernelBase:
+        return None
 
     def create_weights(
         self,
